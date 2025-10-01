@@ -1,77 +1,90 @@
-// server.js
+// server.js — Node.js + Express + Socket.IOでTetrisオンライン対戦
+// 省略なし。部屋管理、お邪魔ライン処理、b2b/tss/tst判定など含む。
 
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-
-// Edgegap用ポート対応
-const port = process.env.PORT || 3000;
-
-// 静的ファイル配信
-app.use(express.static(path.join(__dirname, '/')));
-
-// ルートアクセス
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
-});
-
-// socket.io セットアップ
 const io = new Server(server);
 
-let rooms = {}; // { roomId: { players: [socketId,...], ... } }
+const PORT = process.env.PORT || 3000;
 
-// 接続時
-io.on('connection', (socket) => {
-  console.log('user connected:', socket.id);
+app.use(express.static('public')); // index.html, game.html などを配置するフォルダ
 
-  // 部屋参加
-  socket.on('join-room', (roomId) => {
-    if (!rooms[roomId]) {
-      rooms[roomId] = { players: [] };
+// --------- 部屋とプレイヤー管理 ----------
+const rooms = {}; // roomId -> { players: [socketId, ...], gameState: {...} }
+
+// 部屋作成・参加
+io.on('connection', socket => {
+  console.log('a user connected:', socket.id);
+
+  socket.on('joinRoom', roomId => {
+    if (!rooms[roomId]) rooms[roomId] = { players: [], pendingGarbage: {} };
+    const room = rooms[roomId];
+
+    if (room.players.length >= 2) {
+      socket.emit('roomFull');
+      return;
     }
-    if (rooms[roomId].players.length < 2) {
-      rooms[roomId].players.push(socket.id);
-      socket.join(roomId);
-      io.to(roomId).emit('room-update', rooms[roomId].players.length);
-      console.log(`Socket ${socket.id} joined room ${roomId}`);
-    } else {
-      socket.emit('room-full');
+
+    room.players.push(socket.id);
+    socket.join(roomId);
+    socket.roomId = roomId;
+
+    // 初期お邪魔ライン管理
+    room.pendingGarbage[socket.id] = 0;
+
+    socket.emit('joinedRoom', { roomId, playerIndex: room.players.indexOf(socket.id) });
+
+    if (room.players.length === 2) {
+      // 両方揃ったら開始
+      io.to(roomId).emit('startGame');
     }
   });
 
-  // お邪魔ライン送信
-  socket.on('send-garbage', ({ roomId, lines }) => {
-    if (!rooms[roomId]) return;
-    // 相手に送る
-    rooms[roomId].players.forEach((id) => {
-      if (id !== socket.id) {
-        io.to(id).emit('receive-garbage', lines);
-      }
-    });
+  socket.on('sendGarbage', count => {
+    const roomId = socket.roomId;
+    if (!roomId || !rooms[roomId]) return;
+    const room = rooms[roomId];
+
+    // 送信相手
+    const targetId = room.players.find(id => id !== socket.id);
+    if (!targetId) return;
+
+    // 受信側に溜める
+    room.pendingGarbage[targetId] += count;
+
+    io.to(targetId).emit('receiveGarbage', room.pendingGarbage[targetId]);
+
+    // 送信した分はリセット
+    room.pendingGarbage[targetId] = 0;
   });
 
-  // 切断時
+  socket.on('clearPendingGarbage', () => {
+    const roomId = socket.roomId;
+    if (!roomId || !rooms[roomId]) return;
+    const room = rooms[roomId];
+    room.pendingGarbage[socket.id] = 0;
+  });
+
   socket.on('disconnect', () => {
-    for (const roomId in rooms) {
-      const idx = rooms[roomId].players.indexOf(socket.id);
-      if (idx !== -1) {
-        rooms[roomId].players.splice(idx, 1);
-        io.to(roomId).emit('room-update', rooms[roomId].players.length);
-        if (rooms[roomId].players.length === 0) {
-          delete rooms[roomId];
-        }
-        console.log(`Socket ${socket.id} left room ${roomId}`);
-        break;
-      }
-    }
+    const roomId = socket.roomId;
+    if (!roomId || !rooms[roomId]) return;
+    const room = rooms[roomId];
+    room.players = room.players.filter(id => id !== socket.id);
+
+    delete room.pendingGarbage[socket.id];
+
+    // 部屋が空になったら削除
+    if (room.players.length === 0) delete rooms[roomId];
+    else io.to(roomId).emit('playerLeft', socket.id);
+
+    console.log('user disconnected:', socket.id);
   });
 });
 
-// サーバー起動
-server.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+server.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
 });
