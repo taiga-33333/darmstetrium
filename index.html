@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tetris Online - 部屋選択</title>
+<style>
+  body {
+    background: #111;
+    color: #eee;
+    font-family: monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    margin: 0;
+  }
+  h1 {
+    font-size: 28px;
+    margin-bottom: 20px;
+  }
+  input {
+    font-size: 18px;
+    padding: 8px;
+    margin: 5px;
+  }
+  button {
+    font-size: 18px;
+    padding: 8px 16px;
+    margin: 5px;
+    cursor: pointer;
+    background: #0ff;
+    color: #000;
+    border: none;
+    border-radius: 5px;
+  }
+  #status {
+    margin-top: 20px;
+    font-size: 16px;
+    color: #ccc;
+  }
+</style>
+</head>
+<body>
+  <h1>テトリス オンライン対戦</h1>
+  <div>
+    <input id="roomInput" placeholder="部屋名を入力 (例: room1)">
+    <button id="joinBtn">部屋に入る</button>
+  </div>
+  <div id="status">部屋を選んでください</div>
+
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script>
+    const socket = io("https://YOUR_EDGEGAP_URL"); // EdgegapのURLに置換
+    const roomInput = document.getElementById("roomInput");
+    const status = document.getElementById("status");
+
+    document.getElementById("joinBtn").onclick = () => {
+      const room = roomInput.value.trim();
+      if (!room) {
+        alert("部屋名を入力してください！");
+        return;
+      }
+      socket.emit("joinRoom", room);
+    };
+
+    socket.on("wait", () => {
+      status.innerText = "相手を待っています...";
+    });
+
+    socket.on("start", () => {
+      status.innerText = "ゲーム開始！";
+      const room = roomInput.value.trim();
+      window.location.href = `game.html?room=${room}`;
+    });
+  </script>
+</body>
+</html>
